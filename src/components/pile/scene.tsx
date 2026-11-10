@@ -14,12 +14,12 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { ATLAS, BASE_WAVE, type PropAsset } from "@/data/atlas";
 import { scaleFor, shuffleVisit, type Visit } from "@/data/visit";
 import { bodies, bodyIds, emitPile, pileBus, setHold } from "./bus";
-import { liveLimit, onPhone } from "./device";
+import { onPhone } from "./device";
 import { limitLoads } from "./glb-queue";
 
-// stuff.grok.me ring was 2.85, and objects landed inside a disk of radius 1.8.
-const AREA = 2.85 * 2;
-const FALL_RADIUS = (2.85 - 1.05) * 2;
+// Original ring was 2.85 across a landing disk of radius 1.8. This circle is 4× that.
+const AREA = 2.85 * 4;
+const FALL_RADIUS = (2.85 - 1.05) * 4;
 
 type Bounds = { minY: number; center: [number, number, number]; size: [number, number, number] };
 
@@ -146,32 +146,34 @@ function Membrane({ lit }: { lit: boolean }) {
 }
 
 function Floor({ lit }: { lit: boolean }) {
-  const posts = 36;
+  const wallR = AREA + 0.7;
+  const posts = Math.ceil((Math.PI * 2 * wallR) / 0.95);
+  const halfTang = (Math.PI * wallR) / posts + 0.16;
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <circleGeometry args={[28, 72]} />
+        <circleGeometry args={[AREA + 26, 80]} />
         <meshStandardMaterial color={lit ? "#e6ded2" : "#12100c"} roughness={1} metalness={0} />
       </mesh>
       <Membrane lit={lit} />
-      <RigidBody type="fixed" colliders={false} friction={0.55} restitution={0.62}>
+      <RigidBody type="fixed" colliders={false} friction={0.92} restitution={0}>
         <CuboidCollider
-          args={[30, 4, 30]}
+          args={[AREA + 22, 4, AREA + 22]}
           position={[0, -4, 0]}
-          friction={0.55}
-          restitution={0.62}
-          restitutionCombineRule={CoefficientCombineRule.Max}
+          friction={0.92}
+          restitution={0}
+          restitutionCombineRule={CoefficientCombineRule.Min}
         />
         {Array.from({ length: posts }, (_, i) => {
           const a = (i / posts) * Math.PI * 2;
           return (
             <CuboidCollider
               key={i}
-              args={[0.18, 2.6, 0.62]}
-              position={[Math.sin(a) * (AREA + 0.28), 2.4, Math.cos(a) * (AREA + 0.28)]}
+              args={[0.7, 10, halfTang]}
+              position={[Math.sin(a) * wallR, 10, Math.cos(a) * wallR]}
               rotation={[0, a - Math.PI / 2, 0]}
-              friction={0.75}
-              restitution={0.12}
+              friction={0.9}
+              restitution={0}
             />
           );
         })}
@@ -390,8 +392,8 @@ function PixelShard({ shard }: { shard: Shard }) {
       mass={Math.max(0.08, shard.size * shard.size * 4.5)}
       linearDamping={0.06}
       angularDamping={0.18}
-      friction={0.62}
-      restitution={0.38}
+      friction={0.86}
+      restitution={0.04}
       ccd
       canSleep
     >
@@ -693,7 +695,6 @@ function Spawner({ visit }: { visit: Visit }) {
   const queue = useRef<PropAsset[] | null>(null);
   const ready = useRef(false);
   const batch = useRef(BASE_WAVE * 2);
-  const limit = useRef(1200);
   const live = useRef(0);
   const waveLeft = useRef(0);
   const falling = useRef(false);
@@ -710,12 +711,7 @@ function Spawner({ visit }: { visit: Visit }) {
       emitPile();
       return;
     }
-    const overflow = Math.max(0, live.current + count - limit.current);
-    if (overflow > 0) {
-      setDrops((prev) => prev.slice(overflow));
-      live.current = Math.max(0, live.current - overflow);
-    }
-    waveLeft.current = count;
+    waveLeft.current += count;
     falling.current = true;
     nextDrop.current = performance.now();
     landAt.current = Number.POSITIVE_INFINITY;
@@ -724,7 +720,6 @@ function Spawner({ visit }: { visit: Visit }) {
   };
 
   useEffect(() => {
-    limit.current = liveLimit();
     const pending = shuffleVisit(ATLAS, visit.seed);
     queue.current = pending;
     batch.current = Math.round(BASE_WAVE * visit.mult);
@@ -740,9 +735,16 @@ function Spawner({ visit }: { visit: Visit }) {
   useFrame(() => {
     const pending = queue.current;
     if (!ready.current || !pending) return;
-    if (pileBus.moreTick !== moreSeen.current && !falling.current && pending.length > 0) {
+    if (pileBus.moreTick !== moreSeen.current && pending.length > 0) {
+      const ticks = Math.max(1, pileBus.moreTick - moreSeen.current);
       moreSeen.current = pileBus.moreTick;
-      beginWave(pending.length);
+      const extra = Math.min(pending.length, batch.current * ticks);
+      waveLeft.current += extra;
+      nextDrop.current = Math.min(nextDrop.current, performance.now());
+      falling.current = true;
+      landAt.current = Number.POSITIVE_INFINITY;
+      pileBus.moreReady = false;
+      emitPile();
     }
     if (waveLeft.current > 0) {
       const now = performance.now();
@@ -755,14 +757,14 @@ function Spawner({ visit }: { visit: Visit }) {
           waveLeft.current -= 1;
           const scale = scaleFor(asset.id, visit.seed);
           const angle = Math.random() * Math.PI * 2;
-          const radius = Math.sqrt(Math.random()) * FALL_RADIUS;
+          const radius = Math.sqrt(Math.random()) * Math.max(0.35, Math.min(FALL_RADIUS, AREA - scale * 1.2 - 0.6));
           next.push({
             key: asset.id,
             asset,
             scale,
             position: [
               Math.cos(angle) * radius,
-              18 + Math.random() * 16,
+              6.5 + Math.random() * 8,
               Math.sin(angle) * radius,
             ],
             rotation: [Math.random() * Math.PI, Math.random() * Math.PI * 2, Math.random() * Math.PI],
@@ -876,7 +878,7 @@ function WorldForces() {
       }
     }
 
-    const edge = AREA - 0.7;
+    const limit = AREA - 0.2;
     for (const body of bodies) {
       const mass = body.mass();
       if (!Number.isFinite(mass) || mass <= 0 || body === pileBus.held) continue;
@@ -885,14 +887,23 @@ function WorldForces() {
       if (t.y < -0.02) {
         const v = body.linvel();
         body.setTranslation({ x: t.x, y: 0.08, z: t.z }, true);
-        body.setLinvel({ x: v.x * 0.9, y: Math.max(2.4, -v.y * 0.72), z: v.z * 0.9 }, true);
+        body.setLinvel({ x: v.x * 0.4, y: 0.2, z: v.z * 0.4 }, true);
         continue;
       }
-      if (dist < edge) continue;
-      const pull = Math.min(36, Math.max(0, dist - edge) * 6 + Math.max(0, -t.y) * 12);
-      const scale = pull * mass * dt;
-      const basis = Math.max(dist, 0.2);
-      body.applyImpulse({ x: (-t.x / basis) * scale, y: t.y < 0 ? scale : 0, z: (-t.z / basis) * scale }, true);
+      if (dist <= limit) continue;
+      const nx = t.x / dist;
+      const nz = t.z / dist;
+      const v = body.linvel();
+      const outward = v.x * nx + v.z * nz;
+      body.setTranslation({ x: nx * limit, y: t.y, z: nz * limit }, true);
+      body.setLinvel(
+        {
+          x: v.x - nx * Math.max(0, outward),
+          y: Math.min(v.y, 0.4),
+          z: v.z - nz * Math.max(0, outward),
+        },
+        true,
+      );
     }
 
     if (pileBus.shakeSeq === seen.current) return;
@@ -929,6 +940,124 @@ function WorldForces() {
   return null;
 }
 
+function GroundPan() {
+  const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null;
+  const down = useRef<{ x: number; y: number; id: number } | null>(null);
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; angle: number } | null>(null);
+  const grab = useRef(new THREE.Vector3());
+  const hit = useRef(new THREE.Vector3());
+  const ndc = useRef(new THREE.Vector2());
+  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+
+  useEffect(() => {
+    const el = gl.domElement;
+    const read = (clientX: number, clientY: number, out: THREE.Vector3) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return null;
+      ndc.current.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(ndc.current, camera);
+      return raycaster.ray.intersectPlane(plane, out);
+    };
+    const pair = () => {
+      const marks = [...pts.current.values()];
+      if (marks.length < 2) return null;
+      const dx = marks[1].x - marks[0].x;
+      const dy = marks[1].y - marks[0].y;
+      return { dist: Math.max(1, Math.hypot(dx, dy)), angle: Math.atan2(dy, dx) };
+    };
+    const start = (event: PointerEvent) => {
+      pts.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pts.current.size >= 2) {
+        down.current = null;
+        pinch.current = pair();
+        return;
+      }
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      down.current = { x: event.clientX, y: event.clientY, id: event.pointerId };
+    };
+    const move = (event: PointerEvent) => {
+      const mark = pts.current.get(event.pointerId);
+      if (!mark) return;
+      mark.x = event.clientX;
+      mark.y = event.clientY;
+      if (pileBus.dragging) {
+        down.current = null;
+        pinch.current = null;
+        return;
+      }
+      const twist = pinch.current;
+      if (pts.current.size >= 2 && twist && controls) {
+        const next = pair();
+        if (!next) return;
+        let spin = next.angle - twist.angle;
+        if (spin > Math.PI) spin -= Math.PI * 2;
+        if (spin < -Math.PI) spin += Math.PI * 2;
+        const target = controls.target;
+        const offset = camera.position.clone().sub(target);
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), spin);
+        const dist = Math.min(controls.maxDistance, Math.max(controls.minDistance, offset.length() * (twist.dist / next.dist)));
+        offset.setLength(dist);
+        camera.position.copy(target).add(offset);
+        camera.lookAt(target);
+        controls.update();
+        pinch.current = next;
+        return;
+      }
+      const origin = down.current;
+      if (!origin || event.pointerId !== origin.id || !controls) return;
+      const dx = event.clientX - origin.x;
+      const rect = el.getBoundingClientRect();
+      if (Math.abs(event.clientY - origin.y) > 0.5 && read(origin.x, origin.y, grab.current) && read(origin.x, event.clientY, hit.current)) {
+        const target = controls.target;
+        let nextX = target.x + (grab.current.x - hit.current.x);
+        let nextZ = target.z + (grab.current.z - hit.current.z);
+        const reach = Math.hypot(nextX, nextZ);
+        if (reach > AREA) {
+          nextX = (nextX / reach) * AREA;
+          nextZ = (nextZ / reach) * AREA;
+        }
+        const shiftX = nextX - target.x;
+        const shiftZ = nextZ - target.z;
+        target.x = nextX;
+        target.z = nextZ;
+        camera.position.x += shiftX;
+        camera.position.z += shiftZ;
+      }
+      if (Math.abs(dx) > 0.5) {
+        const target = controls.target;
+        const offset = camera.position.clone().sub(target);
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), (-2 * Math.PI * dx) / Math.max(1, rect.height));
+        camera.position.copy(target).add(offset);
+        camera.lookAt(target);
+        controls.update();
+      }
+      origin.x = event.clientX;
+      origin.y = event.clientY;
+    };
+    const end = (event: PointerEvent) => {
+      pts.current.delete(event.pointerId);
+      pinch.current = pts.current.size >= 2 ? pair() : null;
+      if (down.current?.id === event.pointerId) down.current = null;
+    };
+    el.addEventListener("pointerdown", start);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    return () => {
+      el.removeEventListener("pointerdown", start);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [camera, controls, gl, plane, raycaster]);
+
+  return null;
+}
+
 function OrbitRig() {
   const ref = useRef<OrbitControlsImpl>(null);
   useFrame(() => {
@@ -938,57 +1067,89 @@ function OrbitRig() {
     <OrbitControls
       ref={ref}
       makeDefault
-      enablePan
-      screenSpacePanning
-      panSpeed={1.2}
-      rotateSpeed={1.6}
-      zoomSpeed={1.15}
-      enableDamping
-      dampingFactor={0.08}
-      minDistance={3.2}
-      maxDistance={150}
-      minPolarAngle={0.08}
-      maxPolarAngle={1.42}
-      target={[0, 8.5, 0]}
-      touches={{
-        ONE: THREE.TOUCH.ROTATE,
-        TWO: THREE.TOUCH.DOLLY_PAN,
-      }}
+      enableRotate={false}
+      enablePan={false}
+      enableZoom
+      zoomToCursor={false}
+      zoomSpeed={1}
+      enableDamping={false}
+      minDistance={4}
+      maxDistance={48}
+      target={[0, 0.6, 0]}
+      mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
+      touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.ROTATE }}
     />
   );
 }
 
-const PLANE_TILT = Math.PI / 5.4;
+const LOOK = new THREE.Vector3(0, 0.6, 0);
+const ELEV = Math.PI / 5.4;
+const YAW = Math.PI / 4;
 
 function FrameView() {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null;
+  const posed = useRef(false);
+  const locked = useRef(false);
 
   useEffect(() => {
-    const aspect = Math.max(0.35, size.width / Math.max(1, size.height));
-    const fov = 52;
+    if (size.width < 2 || size.height < 2) return;
+    const aspect = size.width / Math.max(1, size.height);
+    const fov = 42;
     camera.fov = fov;
-    const vFov = THREE.MathUtils.degToRad(fov);
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
-    const distH = (AREA * 2 + 2.4) / 2 / Math.tan(hFov / 2);
-    const distV = 36 / 2 / Math.tan(vFov / 2);
-    const dist = Math.max(distH, distV);
-    const look = new THREE.Vector3(0, 8.5, 0);
-    camera.position.set(0, look.y + Math.sin(PLANE_TILT) * dist, look.z + Math.cos(PLANE_TILT) * dist);
-    camera.near = 0.08;
-    camera.far = Math.max(220, dist * 4);
-    camera.lookAt(look);
-    const fullH = size.height * 1.06;
-    camera.setViewOffset(size.width, fullH, 0, 0, size.width, size.height);
+    if (!posed.current) {
+      const vFov = THREE.MathUtils.degToRad(fov);
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+      const width = AREA * 2 * 1.06;
+      const height = AREA * 2 * Math.sin(ELEV) * 1.12;
+      const distH = width / 2 / Math.tan(hFov / 2);
+      const distV = height / 2 / Math.tan(vFov / 2);
+      const dist = Math.min(distH, distV);
+      camera.position.set(
+        LOOK.x + Math.cos(ELEV) * Math.sin(YAW) * dist,
+        LOOK.y + Math.sin(ELEV) * dist,
+        LOOK.z + Math.cos(ELEV) * Math.cos(YAW) * dist,
+      );
+      camera.near = 0.08;
+      camera.far = Math.max(280, dist * 8);
+      camera.lookAt(LOOK);
+      posed.current = true;
+    }
+    camera.aspect = aspect;
+    camera.clearViewOffset();
     camera.updateProjectionMatrix();
-    if (controls) {
-      controls.target.copy(look);
-      controls.maxDistance = 150;
+    if (controls && !locked.current) {
+      const polar = Math.PI / 2 - ELEV;
+      controls.target.copy(LOOK);
+      controls.enableRotate = false;
+      controls.enablePan = false;
+      controls.zoomToCursor = false;
+      controls.minPolarAngle = polar;
+      controls.maxPolarAngle = polar;
+      controls.minAzimuthAngle = -Infinity;
+      controls.maxAzimuthAngle = Infinity;
+      const dist = camera.position.distanceTo(LOOK);
+      controls.minDistance = dist * 0.28;
+      controls.maxDistance = dist * 2.8;
       controls.update();
+      locked.current = true;
     }
   }, [camera, controls, size.height, size.width]);
 
+  return null;
+}
+
+function GlGuard() {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const lost = (event: Event) => {
+      event.preventDefault();
+    };
+    canvas.addEventListener("webglcontextlost", lost);
+    return () => canvas.removeEventListener("webglcontextlost", lost);
+  }, [gl]);
   return null;
 }
 
@@ -1001,7 +1162,9 @@ function Stage({ lit, visit }: { lit: boolean; visit: Visit }) {
       <Spawner visit={visit} />
       <WorldForces />
       <OrbitRig />
+      <GroundPan />
       <FrameView />
+      <GlGuard />
     </Physics>
   );
 }
@@ -1013,7 +1176,7 @@ export function PileCanvas({ lit, visit }: { lit: boolean; visit: Visit }) {
       className="h-full w-full touch-none"
       shadows={false}
       dpr={phone ? 1 : [1, 1.35]}
-      camera={{ position: [0, 24, 36], fov: 52, near: 0.08, far: 220 }}
+      camera={{ position: [8, 8, 8], fov: 42, near: 0.08, far: 280 }}
       gl={{ antialias: !phone, alpha: false, powerPreference: "high-performance" }}
       onPointerMissed={() => {
         pileBus.dragging = false;

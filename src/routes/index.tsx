@@ -85,19 +85,24 @@ function armSensors() {
   });
 }
 
-async function fillAndLock() {
+function requestFullscreenNow() {
   const el = document.documentElement as HTMLElement & {
     webkitRequestFullscreen?: () => Promise<void> | void;
   };
   const doc = document as Document & { webkitFullscreenElement?: Element | null };
-  if (!document.fullscreenElement && !doc.webkitFullscreenElement) {
-    try {
-      if (el.requestFullscreen) await el.requestFullscreen();
-      else await el.webkitRequestFullscreen?.();
-    } catch {
+  if (document.fullscreenElement || doc.webkitFullscreenElement) return;
+  try {
+    const pending = el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen?.();
+    void Promise.resolve(pending).catch(() => {
       // desktop preview and some in-app browsers refuse fullscreen
-    }
+    });
+  } catch {
+    // needs a user gesture; the next tap tries again
   }
+}
+
+async function fillAndLock() {
+  requestFullscreenNow();
   const orientation = screen.orientation as ScreenOrientation & {
     lock?: (orientation: string) => Promise<void>;
   };
@@ -144,50 +149,24 @@ function Home() {
     armSensors();
     setVisit(readVisit());
     setMounted(true);
-    const base = {
-      w: window.innerWidth,
-      h: window.innerHeight,
-      angle: screen.orientation?.angle ?? (window as Window & { orientation?: number }).orientation ?? 0,
-    };
-    const hold = () => {
-      const now = screen.orientation?.angle ?? (window as Window & { orientation?: number }).orientation ?? 0;
-      const delta = (((now - base.angle) % 360) + 360) % 360;
-      const turned = delta === 90 || delta === 270;
-      const body = document.body;
-      if (!turned) {
-        body.style.position = "";
-        body.style.width = "";
-        body.style.height = "";
-        body.style.left = "";
-        body.style.top = "";
-        body.style.transform = "";
-        body.style.transformOrigin = "";
-        return;
-      }
-      body.style.position = "fixed";
-      body.style.width = `${base.w}px`;
-      body.style.height = `${base.h}px`;
-      body.style.left = "50%";
-      body.style.top = "50%";
-      body.style.transformOrigin = "center center";
-      body.style.transform = `translate(-50%, -50%) rotate(${-delta}deg)`;
-    };
+    let opened = false;
     const unlock = () => {
+      if (opened) return;
+      opened = true;
+      requestFullscreenNow();
       pileBus.heat = Math.min(1, pileBus.heat + 0.14);
       void enableMotion();
     };
-    window.addEventListener("pointerdown", unlock, { once: true });
-    screen.orientation?.addEventListener("change", hold);
-    window.addEventListener("orientationchange", hold);
+    window.addEventListener("pointerdown", unlock, { capture: true });
+    window.addEventListener("touchstart", unlock, { capture: true, passive: true });
     const block = (event: TouchEvent) => {
       if ((event.target as HTMLElement | null)?.closest("button, a")) return;
       event.preventDefault();
     };
     document.body.addEventListener("touchmove", block, { passive: false });
     return () => {
-      window.removeEventListener("pointerdown", unlock);
-      screen.orientation?.removeEventListener("change", hold);
-      window.removeEventListener("orientationchange", hold);
+      window.removeEventListener("pointerdown", unlock, { capture: true });
+      window.removeEventListener("touchstart", unlock, { capture: true });
       document.body.removeEventListener("touchmove", block);
     };
   }, []);
@@ -208,14 +187,14 @@ function Home() {
         </p>
       ) : null}
 
-      <div className="absolute inset-x-0 z-10 flex items-center justify-center gap-3 px-3 bottom-[max(1.7rem,calc(env(safe-area-inset-bottom)+1.35rem))]">
+      <footer className="pile-dock" data-dock="1">
+        <div className="pile-dock-row">
         <button
           type="button"
           aria-pressed={lit}
           aria-label={lit ? "Lights on" : "Turn lights on"}
           onClick={() => {
             pileBus.heat = Math.min(1, pileBus.heat + 0.1);
-            void enableMotion();
             pileBus.lit = !pileBus.lit;
             emitPile();
           }}
@@ -229,9 +208,7 @@ function Home() {
             className="more-stuff relative"
             onClick={() => {
               pileBus.moreTick += 1;
-              pileBus.moreReady = false;
               emitPile();
-              void enableMotion();
             }}
           >
             <span className="more-stuff-bulbs" aria-hidden="true">
@@ -265,19 +242,19 @@ function Home() {
         >
           <img src="/xero/2139.svg" alt="" className="size-8" />
         </a>
-      </div>
-
-      <p className="absolute inset-x-0 bottom-[max(0.35rem,env(safe-area-inset-bottom))] z-10 text-center text-xs leading-none text-fg/90">
-        made with <img src="/xero/1f9e1.svg" alt="🧡" className="inline size-3.5 align-[-2px]" /> in SF{" "}
-        <a
-          href="https://maxi.grok.me"
-          target="_blank"
-          rel="noreferrer"
-          className="underline decoration-line underline-offset-2"
-        >
-          maxi.grok.me
-        </a>
-      </p>
+        </div>
+        <p className="pointer-events-auto text-center text-xs leading-none text-fg/90">
+          made with <img src="/xero/1f9e1.svg" alt="🧡" className="inline size-3.5 align-[-2px]" /> in SF{" "}
+          <a
+            href="https://maxi.grok.me"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-line underline-offset-2"
+          >
+            maxi.grok.me
+          </a>
+        </p>
+      </footer>
     </main>
   );
 }

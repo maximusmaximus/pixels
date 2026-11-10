@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
@@ -19,6 +19,43 @@ function hasGlobbedMigrations(root: string): boolean {
   } catch {
     return false;
   }
+}
+
+function rapierWasmPlugin(): Plugin {
+  const wasmPath = join(
+    process.cwd(),
+    "node_modules/@dimforge/rapier3d-compat/rapier_wasm3d_bg.wasm",
+  );
+  const broken = 'new URL("rapier_wasm3d_bg.wasm","<deleted>")';
+  const fixed = '"/assets/rapier_wasm3d_bg.wasm"';
+  return {
+    name: "app-builder:rapier-wasm",
+    enforce: "pre",
+    transform(code, id) {
+      if (!id.includes("rapier3d-compat") || !code.includes(broken)) return null;
+      return code.replaceAll(broken, fixed);
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathOnly = (req.url ?? "").split("?", 1)[0];
+        if (pathOnly !== "/assets/rapier_wasm3d_bg.wasm") {
+          next();
+          return;
+        }
+        res.setHeader("content-type", "application/wasm");
+        res.setHeader("cache-control", "public, max-age=31536000, immutable");
+        res.end(readFileSync(wasmPath));
+      });
+    },
+    generateBundle() {
+      if (this.environment?.name && this.environment.name !== "client") return;
+      this.emitFile({
+        type: "asset",
+        fileName: "assets/rapier_wasm3d_bg.wasm",
+        source: readFileSync(wasmPath),
+      });
+    },
+  };
 }
 
 /**
@@ -157,6 +194,21 @@ export default defineConfig(({ command, isPreview }) => ({
     strictPort: true,
   },
   resolve: { tsconfigPaths: true },
+  build: {
+    rollupOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "rapier",
+              test: /@dimforge\/rapier3d-compat/,
+              priority: 30,
+            },
+          ],
+        },
+      },
+    },
+  },
   plugins: [
     pgliteBootstrapPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
@@ -165,6 +217,7 @@ export default defineConfig(({ command, isPreview }) => ({
     appEnvPlugin(),
     // PWA head + ?install=1 tutorial page; runs before Start/Nitro.
     grokPwaPlugin(),
+    rapierWasmPlugin(),
     tailwindcss(),
     tanstackStart(),
     ...(command === "build" || isPreview
