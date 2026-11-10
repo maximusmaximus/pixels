@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #14120f;
+  --color-surface: #221e18;
+  --color-fg: #f4efe6;
+  --color-muted: #a39888;
+  --color-amber: #e39b2b;
+  --color-amber-ink: #2a1c08;
+  --color-line: #3a342c;
+  --font-sans: "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "Barlow", sans-serif;
+  --radius: 0.9rem;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    height: 100%;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+  }
+}
+
+@property --more-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.more-stuff {
+  position: relative;
+  isolation: isolate;
+  color: #fff;
+  font-family: var(--font-display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: #1a0022;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.85rem 1.7rem;
+  font-size: 1.45rem;
+  font-weight: 800;
+  animation: 0.55s steps(2, end) infinite more-flash;
+}
+
+.more-stuff:before {
+  content: "";
+  z-index: -1;
+  border-radius: inherit;
+  background: conic-gradient(from var(--more-angle), #ff2bd6, #7af6ff, #ffe14a, #7dff6a, #b388ff, #ff2bd6);
+  filter: blur(1px) drop-shadow(0 0 10px #ff2bd6) drop-shadow(0 0 22px #39f6ff);
+  animation: 0.85s linear infinite more-spin;
+  position: absolute;
+  inset: -8px;
+}
+
+.more-stuff-label {
+  text-shadow:
+    0 0 6px #fff,
+    0 0 14px #ff4ad8,
+    0 0 22px #39f6ff;
+  animation: 0.55s ease-in-out infinite more-glow;
+}
+
+.more-stuff-bulbs {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+}
+
+.more-stuff-bulbs i {
+  background: #fff;
+  border-radius: 999px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5px;
+  animation: 0.48s steps(2, end) infinite more-bulb;
+  position: absolute;
+  box-shadow:
+    0 0 6px #fff,
+    0 0 14px #39f6ff,
+    0 0 22px #ff2bd6;
+}
+
+.more-stuff-bulbs i:nth-child(odd) {
+  background: #d9ffff;
+  animation-delay: 0.28s;
+}
+
+@keyframes more-spin {
+  to {
+    --more-angle: 360deg;
+  }
+}
+
+@keyframes more-flash {
+  0%,
+  49% {
+    filter: brightness(1);
+    box-shadow:
+      0 0 14px #ff2bd6,
+      0 0 36px #ff2bd6,
+      0 0 54px #7a4dff,
+      inset 0 0 18px #ff2bd688;
+  }
+  50%,
+  to {
+    filter: brightness(1.7);
+    box-shadow:
+      0 0 18px #39f6ff,
+      0 0 42px #ffe14a,
+      0 0 64px #39f6ff,
+      inset 0 0 20px #39f6ff88;
+  }
+}
+
+@keyframes more-glow {
+  0%,
+  to {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes more-bulb {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  to {
+    opacity: 0.12;
+  }
+}
+
+.hold-name {
+  pointer-events: none;
+  position: absolute;
+  z-index: 20;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: max(6.6rem, calc(env(safe-area-inset-bottom) + 6.25rem));
+  margin: 0;
+  text-align: center;
+  text-wrap: balance;
+  font-family: var(--font-display);
+  font-size: clamp(1.7rem, 6vw, 3.4rem);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 0.92;
+  text-transform: uppercase;
+  animation: 0.42s steps(2, end) infinite hold-flash;
+  text-shadow:
+    0 2px 0 #120e0a,
+    0 0 12px currentColor,
+    0 0 28px currentColor;
+}
+
+@keyframes hold-flash {
+  0%,
+  49% {
+    opacity: 1;
+    filter: brightness(1.45);
+  }
+  50%,
+  to {
+    opacity: 0.28;
+    filter: brightness(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .more-stuff,
+  .more-stuff:before,
+  .more-stuff-label,
+  .more-stuff-bulbs i,
+  .hold-name {
+    animation: none;
+  }
+}
